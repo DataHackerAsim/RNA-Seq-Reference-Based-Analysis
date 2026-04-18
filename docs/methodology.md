@@ -1,667 +1,581 @@
-# 📋 Methodology — Step-by-Step Analysis Guide
+# Methodology: Reference-Based RNA-Seq Analysis in Galaxy
 
-This document describes every step of the RNA-Seq analysis 
-in detail, including all tool parameters. Anyone can 
-reproduce this analysis by following these steps exactly 
-on [Galaxy](https://usegalaxy.eu).
+## 1. Overview
 
----
+This methodology describes a complete reference-based RNA-Seq workflow carried out on **Galaxy** using `usegalaxy.eu`. The pipeline covers data import, quality control, read trimming, genome alignment, quantification, differential expression analysis, visualization, and functional enrichment. The workflow is designed to be fully reproducible and to provide a transparent record of every major analysis decision.
 
-## 📖 Table of Contents
-1. [Data Import & Setup](#step-1--data-import--setup)
-2. [Quality Control](#step-2--quality-control)
-3. [Read Trimming](#step-3--read-trimming)
-4. [Read Mapping](#step-4--read-mapping-rna-star)
-5. [Read Counting](#step-5--read-counting-featurecounts)
-6. [Differential Expression](#step-6--differential-expression-deseq2)
-7. [Visualization](#step-7--visualization)
-8. [Functional Enrichment](#step-8--functional-enrichment)
+The analysis is organized into two Galaxy histories:
+
+- **History 1: RNA-Seq Reference-Based Analysis**  
+  Used for data import, quality control, trimming, alignment, and read counting.
+- **History 2: RNA-Seq DESeq2 Analysis**  
+  Used for differential expression analysis, annotation, visualization, and enrichment.
+
+Wherever possible, the same input datasets, annotations, and thresholds were used consistently across the workflow to ensure reproducibility and biological interpretability.
 
 ---
 
-## 🔰 Before You Start
+## 2. Scientific Rationale
 
-### What is Galaxy?
-Galaxy is a free, web-based platform for bioinformatics analysis.
-You do not need to install any software. Everything runs in your 
-browser. Go to [usegalaxy.eu](https://usegalaxy.eu) and register.
+RNA-Seq measures transcript abundance by sequencing cDNA derived from RNA molecules. Because the reads originate from processed transcripts rather than continuous genomic DNA, analysis requires tools that can:
 
-### What is a History?
-In Galaxy, a **History** is like a project folder. It stores all 
-your input files, tool outputs and results. We use 2 histories:
-- **History 1**: `RNA-Seq Reference-Based Analysis` → QC to Counting
-- **History 2**: `RNA-Seq DESeq2 Analysis` → DESeq2 to Enrichment
+1. assess read quality and remove technical artifacts;
+2. align reads across splice junctions;
+3. summarize read evidence at the gene level;
+4. model count data statistically to identify differentially expressed genes;
+5. interpret the resulting gene list in a biological context.
 
----
-
-## STEP 1 — Data Import & Setup
-
-### 1.1 Create New History
-```
-1. Log in to usegalaxy.eu
-2. Click "+" icon at top right of History panel
-3. Name it: RNA-Seq Reference-Based Analysis
-4. Press Enter
-```
-
-### 1.2 Import FASTQ Files
-
-> 💡 We use subsampled files (~5MB) for faster processing.
-> Full files (~1.5GB each) are also available on Zenodo.
-```
-1. Click Upload button (top left panel)
-2. Click "Paste/Fetch Data"
-3. Paste these 4 URLs:
-
-https://zenodo.org/record/6457007/files/GSM461177_1_subsampled.fastqsanger
-https://zenodo.org/record/6457007/files/GSM461177_2_subsampled.fastqsanger
-https://zenodo.org/record/6457007/files/GSM461180_1_subsampled.fastqsanger
-https://zenodo.org/record/6457007/files/GSM461180_2_subsampled.fastqsanger
-
-4. Click Start → Close
-5. Wait for all 4 files to turn green
-```
-
-### 1.3 Check Datatype
-```
-For each file:
-1. Click the file → click pencil icon (Edit attributes)
-2. Click "Datatype" tab
-3. Confirm it shows: fastqsanger
-4. If it shows "fastq" → change to "fastqsanger" → Save
-```
-
-### 1.4 Create Paired Collection
-```
-Purpose: Group forward (_1) and reverse (_2) reads 
-         for each sample into pairs
-
-1. Click checkbox icon at top of History panel
-2. Select all 4 FASTQ files
-3. Click "4 of 4 selected" dropdown
-4. Choose "Build List of Dataset Pairs"
-5. Confirm auto-pairing:
-   - GSM461177_1 ↔ GSM461177_2 (untreated pair)
-   - GSM461180_1 ↔ GSM461180_2 (treated pair)
-6. Collection name: 2 PE fastqs
-7. Click Build
-```
+This methodology follows a standard reference-based RNA-Seq strategy and uses well-established tools in the Galaxy ecosystem to ensure both accessibility and rigor.
 
 ---
 
-## STEP 2 — Quality Control
+## 3. Input Data and Reference Resources
 
-### Why do Quality Control?
-Raw sequencing data can contain:
-- **Low quality bases** → incorrect nucleotide calls
-- **Adapter sequences** → artificial sequences from library prep
-- **Overrepresented sequences** → contamination
-These issues can affect downstream analysis if not addressed.
+### 3.1 Sequencing data
 
-### 2.1 Flatten Collection
-```
-Purpose: MultiQC cannot process paired collections directly,
-         so we first convert to a simple list
+Paired-end FASTQ files were used for the reference-based mapping workflow. To keep the workflow efficient while preserving the logic of the analysis, subsampled files were used for the alignment-based steps. Full-sized files are also available through Zenodo for the same dataset.
 
-Tool: Flatten collection
-Parameter:
-  - Input Collection: 2 PE fastqs
-Click: Run Tool
-```
+The following FASTQ files were imported for the mapping workflow:
 
-### 2.2 Run Falco (Quality Check)
-```
-Purpose: Generate quality report for each FASTQ file
+- `GSM461177_1_subsampled.fastqsanger`
+- `GSM461177_2_subsampled.fastqsanger`
+- `GSM461180_1_subsampled.fastqsanger`
+- `GSM461180_2_subsampled.fastqsanger`
 
-Tool: Falco (version 1.2.4+galaxy0)
-Parameter:
-  - Raw read data: [collection icon] Output of Flatten collection
-Click: Run Tool
+For differential expression analysis, pre-computed gene count files corresponding to seven samples were used to represent the full biological comparison more comprehensively.
 
-Outputs:
-  - RawData (txt files) → used for MultiQC input
-  - Webpage (html files) → visual reports per sample
-```
+### 3.2 Reference genome and annotation
 
-### 2.3 What to Look For in Falco Reports
-| Metric | Good Range | Action if Bad |
-|--------|-----------|---------------|
-| Per base quality | Phred score > 20 | Trim low quality ends |
-| Adapter content | None/minimal | Use Cutadapt to remove |
-| Per sequence quality | Peak at high scores | Filter low quality reads |
-| GC content | Matches expected | Investigate if abnormal |
-| Read length | Consistent | Note for STAR parameter |
+The analysis used the **Drosophila melanogaster** reference genome (**dm6**) together with the matching GTF annotation file:
 
-### 2.4 Run MultiQC (Combine Falco Reports)
-```
-Purpose: Combine all Falco reports into one summary report
+- `Drosophila_melanogaster.BDGP6.32.109_UCSC.gtf.gz`
 
-Tool: MultiQC (version 1.27+galaxy4)
-Parameters:
-  - Which tool generated logs?: FastQC
-    (Falco is a drop-in replacement for FastQC)
-  - FastQC output type: Raw data
-  - FastQC output: [collection] Falco on collection: RawData
-Click: Run Tool
-
-Output: One combined HTML report for all samples
-```
+The annotation file was used consistently for genome-guided spliced alignment, gene-level counting, annotation of DESeq2 results, and downstream functional interpretation.
 
 ---
 
-## STEP 3 — Read Trimming
+## 4. Workflow Summary
 
-### Why Trim?
-After quality control, we remove:
-- **Low quality bases** at read ends (Phred < 20)
-- **Short reads** that are too short to map reliably
-- **Adapter sequences** if present
-
-### 3.1 Run Cutadapt
-```
-Tool: Cutadapt (version 5.2+galaxy0)
-Parameters:
-  - Single or Paired-end?: Paired-end Collection
-  - Paired Collection: 2 PE fastqs
-  
-  Under "Other Read Trimming Options":
-  - Quality cutoff (R1): 20
-  
-  Under "Read Filtering Options":
-  - Minimum length (R1): 20
-  
-  Under "Additional outputs":
-  - ✅ Report (per-adapter statistics)
-  
-Click: Run Tool
-
-Outputs:
-  - Reads (trimmed FASTQ pairs) → used for mapping
-  - Report (statistics) → used for MultiQC
-```
-
-> 💡 **Why run once for paired-end?**
-> Cutadapt processes both reads in a pair together. If one 
-> read becomes too short after trimming, it removes BOTH 
-> reads to maintain pairing. This is important — unpaired 
-> reads cause problems in downstream analysis.
-
-### 3.2 Run MultiQC on Cutadapt Reports
-```
-Tool: MultiQC (version 1.27+galaxy4)
-Parameters:
-  - Which tool generated logs?: Cutadapt/Trim Galore!
-  - Output of Cutadapt: [collection] Cutadapt on collection: Report
-Click: Run Tool
-
-Check in report:
-  - How many reads were removed?
-  - How many basepairs were trimmed from R1 vs R2?
-```
+1. Import and verify FASTQ input data.
+2. Group paired-end reads into collections.
+3. Assess read quality with Falco and summarize with MultiQC.
+4. Trim low-quality bases and filter short reads using Cutadapt.
+5. Align reads to the dm6 genome with RNA STAR.
+6. Count reads per gene using featureCounts.
+7. Run DESeq2 on pre-computed count tables with a two-factor design.
+8. Annotate differential expression results.
+9. Filter significant genes using adjusted p-value and fold-change thresholds.
+10. Visualize expression patterns with heatmaps.
+11. Perform GO and KEGG enrichment analysis using goseq.
 
 ---
 
-## STEP 4 — Read Mapping (RNA STAR)
+## 5. Galaxy Setup and Data Organization
 
-### Why is Mapping Special for RNA-Seq?
-In RNA-Seq, reads come from **processed mRNA** (with introns removed).
-When we map back to the genome (which has introns), the mapper must 
-handle **splice junctions** — places where reads span two exons.
-RNA STAR is a **splice-aware** mapper designed for this purpose.
-```
-Genome: ===EXON1=====[INTRON]=====EXON2===
-mRNA:   ===EXON1========================EXON2===
-Read:              ←read spans junction→
-```
+### 5.1 Create a new history
 
-### 4.1 Import GTF Annotation File
-```
-Purpose: The GTF file tells STAR where genes and exons are 
-         located in the genome
+A dedicated Galaxy history was created for the mapping workflow and named:
 
-1. Click Upload → Paste/Fetch Data
-2. Paste:
-https://zenodo.org/record/6457007/files/Drosophila_melanogaster.BDGP6.32.109_UCSC.gtf.gz
-3. Click Start → Close
-4. Verify datatype is gtf or gtf.gz (not gff)
-```
+**RNA-Seq Reference-Based Analysis**
 
-### 4.2 Run RNA STAR
-```
-Tool: RNA STAR (version 2.7.11b+galaxy0)
-Parameters:
-  - Single or paired-end?: Paired-end (as collection)
-  - RNA-Seq paired reads: [collection] Cutadapt on collection: Reads
-  - Custom or built-in genome?: Use a built-in index
-  - Reference genome with/without annotation?: 
-    use genome reference without builtin gene-model but provide a gtf
-  - Select reference genome: Fly (Drosophila melanogaster): dm6 Full
-  - Gene model (gtf) file: Drosophila_melanogaster.BDGP6.32.109_UCSC.gtf.gz
-  - Length of genomic sequence around junctions: 36
-    (= read length - 1; our reads are 37bp)
-  - Per gene output: Per gene read counts (GeneCounts)
-  - Compute coverage: Yes in bedgraph format
+A second history was created for DESeq2-based statistical analysis:
 
-Click: Run Tool
+**RNA-Seq DESeq2 Analysis**
 
-Outputs:
-  - mapped.bam → aligned reads (main output)
-  - log → alignment statistics
-  - reads per gene → gene counts
-  - splice junctions.bed → detected splice sites
-  - Coverage files (bedgraph) → strand coverage
-```
+Using separate histories helps keep the workflow organized, reduces the risk of accidental overwriting, and makes the analysis easier to review and reproduce.
 
-### 4.3 Run MultiQC on STAR Logs
-```
-Tool: MultiQC (version 1.27+galaxy4)
-Parameters:
-  - Which tool generated logs?: STAR
-  - Type of STAR output?: Log
-  - STAR log output: [collection] RNA STAR on collection: log
-Click: Run Tool
+### 5.2 Import data
 
-What to check:
-  - Uniquely mapped reads: should be >75%
-  - Multi-mapped reads: should be <10%
-  - Unmapped reads: should be <10%
-```
+FASTQ and annotation files were uploaded to Galaxy using the **Upload Data** function and the **Paste/Fetch Data** option. After upload, each dataset was checked to confirm that:
+
+- the file completed successfully and turned green;
+- the datatype was correctly assigned;
+- paired files were correctly matched.
+
+### 5.3 Datatype verification
+
+Each FASTQ dataset was checked to ensure it was recognized as `fastqsanger`. If a file was incorrectly identified as generic `fastq`, the datatype was corrected manually. This step is important because downstream tools expect quality scores to be in the correct encoding.
+
+### 5.4 Build paired collections
+
+The paired-end FASTQ files were combined into a paired collection so that each forward read was matched with its corresponding reverse read. The resulting collection was named:
+
+**2 PE fastqs**
+
+This organization is essential for paired-end trimming and mapping because tools must process read pairs together to preserve read pairing information throughout the workflow.
 
 ---
 
-## STEP 5 — Read Counting (featureCounts)
+## 6. Quality Control
 
-### Why Count Reads?
-After mapping, we know WHERE each read came from in the genome.
-Now we need to count HOW MANY reads came from each gene.
-This count represents the **expression level** of each gene.
+### 6.1 Purpose of quality control
 
-### 5.1 Run featureCounts
-```
-Tool: featureCounts (version 2.1.1+galaxy0)
-Parameters:
-  - Alignment file: [collection] RNA STAR on collection: mapped.bam
-  - Specify strand information: Unstranded
-  - Gene annotation file: A GFF/GTF file in your history
-  - Gene annotation file: Drosophila_melanogaster.BDGP6.32.109_UCSC.gtf.gz
-  - GFF feature type filter: exon
-  - GFF gene identifier: gene_id
-  - Output format: Gene-ID "\t" read-count (MultiQC/DESeq2 compatible)
-  - Create gene-length file: Yes
-  - Does input have read pairs?: Yes, paired-end count as 1 fragment
-  
-  Under "Read filtering options":
-  - Minimum mapping quality: 10
+Raw sequencing reads can contain technical or biological artifacts that affect downstream analysis. Common issues include:
 
-Click: Run Tool
+- low-quality base calls toward read ends;
+- adapter contamination;
+- uneven base composition;
+- abnormal GC content;
+- overrepresented sequences;
+- unexpectedly short or truncated reads.
 
-Outputs:
-  - Counts → gene expression count matrix
-  - Summary → assignment statistics
-  - Feature lengths → gene length file (needed for goseq)
-```
+Performing quality control before trimming allows assessment of whether the data require preprocessing and whether the overall sequencing run appears technically sound.
 
-### 5.2 Run MultiQC on featureCounts
-```
-Tool: MultiQC (version 1.27+galaxy4)
-Parameters:
-  - Which tool generated logs?: featureCounts
-  - Output of FeatureCounts: [collection] featureCounts: Summary
-Click: Run Tool
+### 6.2 Flatten paired collections
 
-What to check:
-  - % reads assigned to genes: ideally >60%
-  - % unassigned reads: should be low
-```
+Some Galaxy reporting tools work more easily with simple dataset lists than with paired collections. Therefore, the paired collection was first flattened into a single list before running per-sample quality assessment.
 
----
+### 6.3 Falco quality assessment
 
-## STEP 6 — Differential Expression (DESeq2)
+The flattened FASTQ datasets were analyzed using **Falco** to generate quality metrics for each file.
 
-### Why Use DESeq2?
-Raw read counts cannot be directly compared between samples because:
-- Samples have different **sequencing depths** (total read numbers)
-- Longer genes naturally get **more reads**
-- There may be differences in **library composition**
+**Purpose:**  
+To inspect the per-base and per-read quality profile of each sample.
 
-DESeq2 handles all these normalizations and uses statistical 
-models to find genes that are truly differentially expressed.
+**Typical outputs included:**
 
-### 6.1 Create New History
-```
-1. Click "+" icon at top right of History panel
-2. Name it: RNA-Seq DESeq2 Analysis
-3. Press Enter
-```
+- HTML quality reports for visual inspection;
+- raw report tables for summary aggregation.
 
-### 6.2 Import 7 Count Files
-```
-1. Click Upload → Paste/Fetch Data
-2. Paste all 7 URLs:
+### 6.4 MultiQC aggregation
 
-https://zenodo.org/record/6457007/files/GSM461176_untreat_single_featureCounts.counts
-https://zenodo.org/record/6457007/files/GSM461177_untreat_paired_featureCounts.counts
-https://zenodo.org/record/6457007/files/GSM461178_untreat_paired_featureCounts.counts
-https://zenodo.org/record/6457007/files/GSM461179_treat_single_featureCounts.counts
-https://zenodo.org/record/6457007/files/GSM461180_treat_paired_featureCounts.counts
-https://zenodo.org/record/6457007/files/GSM461181_treat_paired_featureCounts.counts
-https://zenodo.org/record/6457007/files/GSM461182_untreat_single_featureCounts.counts
+The Falco outputs were summarized using **MultiQC** to produce a single consolidated report across all samples.
 
-3. Click Start → Close
-4. Wait for all 7 files to turn green
-```
+**Purpose:**  
+To provide a sample-by-sample overview of sequencing quality in one report.
 
-> 💡 **Why use pre-computed count files?**
-> The full analysis uses 7 samples (3 treated + 4 untreated) for 
-> statistical power. Processing all 7 from FASTQ would take too long, 
-> so pre-computed counts are provided for the DESeq2 step.
+### 6.5 Quality interpretation criteria
 
-### 6.3 Run DESeq2
-```
-Tool: DESeq2 (version 2.11.40.8+galaxy0)
-Parameters:
-  - how: Select datasets per level
+The following metrics were inspected carefully:
 
-  FACTOR 1:
-  - Factor name: Treatment
-  - Level 1 name: treated
-  - Count files for treated: GSM461179, GSM461180, GSM461181
-  - Level 2 name: untreated
-  - Count files for untreated: GSM461176, GSM461177, GSM461178, GSM461182
+| Metric | Expected interpretation | Concern if abnormal |
+|---|---|---|
+| Per-base quality | High quality across most positions | Need for trimming or data quality concerns |
+| Adapter content | Minimal or absent | Adapter removal required |
+| Per-sequence quality | Majority of reads at good quality | Presence of low-quality reads |
+| GC content | Consistent with the organism and library | Possible contamination or bias |
+| Sequence length distribution | Consistent with input data | Possible trimming or sequencing issues |
 
-  Click "+ Insert Factor" to add second factor:
-
-  FACTOR 2:
-  - Factor name: Sequencing
-  - Level 1 name: PE
-  - Count files for PE: GSM461177, GSM461178, GSM461180, GSM461181
-  - Level 2 name: SE
-  - Count files for SE: GSM461176, GSM461179, GSM461182
-
-  Other settings:
-  - Files have header?: Yes
-  - Choice of input data: Count data (featureCounts/HTSeq)
-  - Use beta priors: Yes
-
-  Output options:
-  - ✅ Generate plots for visualizing results
-  - ✅ Output normalised counts
-
-Click: Run Tool
-
-Outputs:
-  - Result file → DESeq2 statistics for all genes
-  - Plots → PCA, heatmap, MA plot, dispersion estimates
-  - Normalized counts → normalized expression values
-```
-
-> 💡 **Why 2 factors?**
-> We include "Sequencing" as a second factor because some samples 
-> are paired-end and others are single-end. Including this in the 
-> model prevents it from confounding our treatment effect results.
-
-### 6.4 Annotate DESeq2 Results
-```
-Purpose: Add gene names and locations to the results table
-
-Step 1 - Import GTF:
-  Upload: https://zenodo.org/record/6457007/files/Drosophila_melanogaster.BDGP6.32.109_UCSC.gtf.gz
-
-Step 2 - Run Annotate tool:
-  Tool: Annotate DESeq2/DEXSeq output tables (version 1.1.0+galaxy1)
-  Parameters:
-    - Tabular output of DESeq2: DESeq2 result file
-    - Input file type: DESeq2/edgeR/limma
-    - Reference annotation: Drosophila_melanogaster.BDGP6.32.109_UCSC.gtf.gz
-  Click: Run Tool
-
-Step 3 - Add column headers:
-  Create a new tabular file with this header (tab-separated):
-  GeneID  Base mean  log2(FC)  StdErr  Wald-Stats  P-value  P-adj  Chromosome  Start  End  Strand  Feature  Gene symbol
-
-  Tool: Concatenate datasets
-  Parameters:
-    - First: header file
-    - Second: Annotate output
-  Rename output: Annotated DESeq2 results
-```
-
-### 6.5 Filter Differentially Expressed Genes
-```
-Step 1 - Filter by adjusted p-value:
-  Tool: Filter data on any column using simple expressions
-  Parameters:
-    - Filter: Annotated DESeq2 results
-    - Condition: c7<0.05
-    - Header lines to skip: 1
-  Rename: Genes with significant adj p-value
-
-  → This keeps only statistically significant results
-  → Adjusted p-value corrects for multiple testing
-
-Step 2 - Filter by fold change:
-  Tool: Filter data on any column using simple expressions
-  Parameters:
-    - Filter: Genes with significant adj p-value
-    - Condition: abs(c3)>1
-    - Header lines to skip: 1
-  Rename: Genes with significant adj p-value & abs(log2(FC)) > 1
-
-  → abs(log2FC) > 1 means fold change > 2 or < 0.5
-  → This keeps only biologically meaningful changes
-
-Result: 113 genes pass both filters
-```
+Quality control is not only a descriptive step; it informs the trimming strategy and helps validate that downstream results are built on reliable input reads.
 
 ---
 
-## STEP 7 — Visualization
+## 7. Read Trimming and Filtering
 
-### 7.1 Extract Normalized Counts for DEGs
-```
-Step 1 - Join datasets:
-  Tool: Join two Datasets side by side on a specified field
-  Parameters:
-    - Join: Normalized counts file (from DESeq2)
-    - Using column: Column 1
-    - With: Genes with significant adj p-value & abs(log2FC) > 1
-    - And column: Column 1
-    - Keep non-joining lines: No
-    - Keep header: Yes
-  Click: Run Tool
+### 7.1 Purpose of trimming
 
-Step 2 - Cut columns:
-  Tool: Cut columns from a table
-  Parameters:
-    - Cut columns: c1-c8
-    - Delimited by: Tab
-    - From: output of Join tool
-  Rename: Normalized counts for the most differentially expressed genes
-```
+Trimming removes technical sequence content and low-quality bases that could interfere with mapping. In this workflow, trimming was used to:
 
-### 7.2 Heatmap of Normalized Counts
-```
-Purpose: Visualize expression patterns of top DEGs across all samples
+- remove low-quality bases from read ends;
+- discard reads that became too short after trimming;
+- improve overall alignment accuracy;
+- reduce the impact of sequencing artifacts.
 
-Tool: heatmap2 (version 3.2.0+galaxy1)
-Parameters:
-  - Input: Normalized counts for the most differentially expressed genes
-  - Data transformation: Log2(value+1) transform my data
-  - Enable data clustering: Yes
-  - Labeling: Label columns and not rows
-  - Colormap: Gradient with 2 colors
-Click: Run Tool
+### 7.2 Cutadapt trimming strategy
 
-Interpretation:
-  - Rows = genes, Columns = samples
-  - Colors show relative expression level
-  - Clustering groups similar genes/samples together
-```
+**Tool:** Cutadapt
 
-### 7.3 Heatmap of Z-scores
-```
-Purpose: Show how far each value is from the gene's mean
-         (removes differences in absolute expression levels)
+**Approach:** Paired-end trimming using the paired collection
 
-Tool: heatmap2 (version 3.2.0+galaxy1)
-Parameters:
-  - Input: Normalized counts for the most differentially expressed genes
-  - Data transformation: Plot the data as it is
-  - Compute z-scores prior to clustering: Compute on rows
-  - Enable data clustering: Yes
-  - Labeling: Label columns and not rows
-  - Colormap: Gradient with 3 colors
-Click: Run Tool
+**Key settings used:**
 
-Interpretation:
-  - Red = higher than average expression
-  - Green = lower than average expression
-  - Z-score = (value - mean) / standard deviation
-```
+- quality cutoff for R1: **20**
+- minimum length: **20**
+- report generation: enabled
+
+### 7.3 Rationale for the trimming parameters
+
+A quality cutoff of 20 corresponds to a commonly used conservative threshold for removing low-confidence bases. A minimum read length of 20 ensures that only reads with sufficient informative sequence are retained for reliable mapping.
+
+For paired-end data, the paired read relationship must be preserved. Reads that become too short after trimming are removed together so that both members of the pair remain synchronized for downstream alignment.
+
+### 7.4 MultiQC on trimming reports
+
+The Cutadapt reports were summarized using MultiQC to assess:
+
+- the number of reads trimmed;
+- the amount of sequence removed from each read;
+- whether trimming was extensive or only minor.
+
+This step provides an audit trail showing how much the preprocessing changed the raw sequencing data.
 
 ---
 
-## STEP 8 — Functional Enrichment
+## 8. Spliced Read Alignment
 
-### Why Enrichment Analysis?
-After finding 113 DEGs, we want to understand:
-- What **biological processes** do these genes control?
-- Which **molecular pathways** are affected?
-- Is there a pattern to the genes that change?
+### 8.1 Why spliced alignment is required
 
-### 8.1 Prepare Input Files for goseq
+RNA-Seq reads often span exon–exon junctions because mature mRNA has undergone splicing. Standard genomic aligners are not sufficient because they do not explicitly model introns. RNA STAR is a splice-aware aligner designed specifically for this purpose.
 
-#### File 1 — Gene IDs and Differential Expression
-```
-Step 1 - Compute boolean column:
-  Tool: Compute on rows
-  Parameters:
-    - Input: DESeq2 result file
-    - Expression: bool(float(c7)<0.05)
-    - Mode: Append
-    - Autodetect column types: No
-    - Replacement value: False
-  Click: Run Tool
+### 8.2 Genome and annotation setup
 
-Step 2 - Cut columns:
-  Tool: Cut columns from a table
-  Parameters:
-    - Cut columns: c1,c8
-    - From: output of Compute tool
-  Click: Run Tool
+The dm6 genome reference was used together with the provided GTF annotation. The GTF file informs STAR where exons and gene structures are located, enabling more accurate splice-junction-aware mapping and downstream gene counting.
 
-Step 3 - Change case:
-  Tool: Change Case
-  Parameters:
-    - From: output of Cut tool
-    - Change case of columns: c1
-    - To: Upper case
-  Rename: Gene IDs and differential expression
-```
+### 8.3 RNA STAR alignment
 
-#### File 2 — Gene Length File
-```
-Step 1 - Re-run featureCounts (in History 1) with:
-         "Create gene-length file: Yes"
-         to generate Feature lengths output
+**Tool:** RNA STAR
 
-Step 2 - Change case:
-  Tool: Change Case
-  Parameters:
-    - From: featureCounts Feature lengths
-    - Change case of columns: c1
-    - To: Upper case
-  Rename: Gene IDs and length
-```
+**Input:** Paired-end trimmed reads from Cutadapt
 
-### 8.2 GO Enrichment Analysis
-```
-Purpose: Find Gene Ontology terms enriched in our DEGs
-         GO categories:
-         - BP = Biological Process (what process the gene is involved in)
-         - MF = Molecular Function (what the gene does at molecular level)
-         - CC = Cellular Component (where the gene acts in the cell)
+**Reference configuration:** Built-in dm6 genome reference with external GTF annotation
 
-Tool: goseq (version 1.50.0+galaxy0)
-Parameters:
-  - Differentially expressed genes: Gene IDs and differential expression
-  - Gene lengths file: Gene IDs and length
-  - Gene categories: Get categories
-  - Genome: Fruit fly (dm6)
-  - Gene ID format: Ensembl Gene ID
-  - Categories: 
-    ✅ GO: Cellular Component
-    ✅ GO: Biological Process
-    ✅ GO: Molecular Function
-  
-  Output Options:
-  - Output Top GO terms plot?: Yes
-  - Extract DE genes for categories?: Yes
+**Important settings used:**
 
-Click: Run Tool
+- paired-end mode: enabled
+- gene annotation file: provided GTF annotation
+- junction overhang: **36**
+- gene counts output: enabled
+- coverage output: enabled in bedgraph format
 
-Outputs:
-  - Ranked category list → all GO terms with statistics
-  - Top over-represented GO terms plot → visual summary
-  - DE genes for categories → which DEGs are in each GO term
-```
+### 8.4 Rationale for the STAR parameter choice
 
-### 8.3 KEGG Pathway Analysis
-```
-Purpose: Find KEGG metabolic/signaling pathways enriched in our DEGs
-         KEGG maps molecular interactions and reactions in cells
+The junction overhang was set to **36**, which matches the read length minus one for the dataset used. This allows STAR to detect splice junctions reliably while accommodating reads that span exon boundaries.
 
-Tool: goseq (version 1.50.0+galaxy0)
-Parameters:
-  - Differentially expressed genes: Gene IDs and differential expression
-  - Gene lengths file: Gene IDs and length
-  - Gene categories: Get categories
-  - Genome: Fruit fly (dm6)
-  - Gene ID format: Ensembl Gene ID
-  - Categories: ✅ KEGG only
+The use of gene-count output from STAR provides an additional read-based summary that can be used for inspection and quality assurance.
 
-  Output Options:
-  - Output Top GO terms plot?: No
-  - Extract DE genes for categories?: Yes
+### 8.5 STAR output interpretation
 
-Click: Run Tool
+The main alignment outputs included:
 
-Outputs:
-  - Ranked category list → KEGG pathways with statistics
-  - DE genes for categories → which DEGs are in each pathway
-```
+- BAM alignment files;
+- alignment log files;
+- gene-level read count summaries;
+- splice junction outputs;
+- coverage tracks in bedgraph format.
+
+### 8.6 STAR quality assessment with MultiQC
+
+STAR log files were summarized using MultiQC. The main alignment metrics reviewed were:
+
+- percentage of uniquely mapped reads;
+- percentage of multi-mapped reads;
+- percentage of unmapped reads;
+- overall alignment consistency across samples.
+
+These metrics help determine whether the library quality, trimming strategy, and reference selection were appropriate.
 
 ---
 
-## 📊 Parameters Summary Table
+## 9. Read Counting
 
-| Tool | Key Parameter | Value | Reason |
-|------|--------------|-------|--------|
-| Cutadapt | Quality cutoff | 20 | Remove Phred<20 bases |
-| Cutadapt | Min length | 20 | Remove very short reads |
-| RNA STAR | Junction overhang | 36 | Read length (37) - 1 |
-| featureCounts | Strand | Unstranded | Library type |
-| featureCounts | Feature type | exon | Count exonic reads |
-| featureCounts | Min mapq | 10 | Remove poor alignments |
-| DESeq2 | Beta prior | Yes | Stabilize fold changes |
-| DESeq2 | padj cutoff | 0.05 | 5% false discovery rate |
-| DESeq2 | log2FC cutoff | 1 | Fold change > 2 |
+### 9.1 Purpose of gene counting
+
+After alignment, the next step is to convert mapped reads into a gene-by-sample count matrix. This matrix is the starting point for statistical analysis of differential expression.
+
+### 9.2 featureCounts quantification
+
+**Tool:** featureCounts
+
+**Input:** STAR-aligned BAM files
+
+**Annotation file:** dm6 GTF annotation
+
+**Key settings used:**
+
+- feature type: **exon**
+- gene identifier: **gene_id**
+- paired-end handling: count each read pair as one fragment
+- minimum mapping quality: **10**
+- strand specificity: **unstranded**
+- gene-length output: enabled
+
+### 9.3 Rationale for counting settings
+
+Counting exon features is appropriate for gene-level RNA-Seq quantification because mature transcript abundance is reflected in exonic read coverage. Using `gene_id` groups exon counts into gene-level totals.
+
+A mapping quality threshold of 10 excludes weak or ambiguous alignments. The library was treated as unstranded because the sequencing design did not require stranded counting.
+
+### 9.4 featureCounts summary review
+
+The summary output was reviewed to assess:
+
+- the percentage of reads assigned to genes;
+- the percentage of unassigned reads;
+- whether the assignment pattern suggested mapping or annotation issues.
+
+A high assignment rate generally indicates that the reference annotation and alignment strategy were appropriate.
 
 ---
 
-## ⚠️ Common Issues & Solutions
+## 10. Differential Expression Analysis
 
-| Issue | Solution |
-|-------|----------|
-| Account not activated | Check email spam folder |
-| Files not uploading | Verify account activation |
-| Wrong datatype | Change to fastqsanger manually |
-| dm6 genome not found | Scroll down in dropdown list |
-| Collection not editable | Rename after building |
-| Feature lengths missing | Re-run featureCounts with "Create gene-length file: Yes" |
+### 10.1 Why use DESeq2
+
+Raw counts cannot be compared directly across samples because of differences in sequencing depth and library composition. DESeq2 addresses these issues by:
+
+- estimating size factors for normalization;
+- modeling count variability with negative binomial statistics;
+- testing whether observed expression differences are likely to be real rather than due to sampling noise.
+
+### 10.2 Input data
+
+For the statistical analysis, seven pre-computed count files were imported into a separate Galaxy history. These corresponded to the available biological samples and provided a broader basis for differential expression testing than the smaller alignment demonstration set.
+
+### 10.3 Model design
+
+A two-factor DESeq2 design was used to account for both biological condition and sequencing type.
+
+**Factor 1: Treatment**
+- treated
+- untreated
+
+**Factor 2: Sequencing**
+- paired-end
+- single-end
+
+Including sequencing type in the model helps prevent technical library design from confounding the biological treatment effect.
+
+### 10.4 DESeq2 settings
+
+**Tool:** DESeq2
+
+**Input type:** Count data from featureCounts
+
+**Important options enabled:**
+
+- headers present in input files: yes
+- beta priors: enabled
+- diagnostic plots: enabled
+- normalized counts output: enabled
+
+### 10.5 Statistical output
+
+DESeq2 generated:
+
+- gene-level test statistics;
+- raw and adjusted p-values;
+- log2 fold changes;
+- normalized counts;
+- diagnostic plots such as PCA, MA plot, dispersion estimates, and sample clustering visualizations.
+
+### 10.6 Interpretation criteria
+
+Genes were considered differentially expressed when they met both of the following thresholds:
+
+- adjusted p-value < **0.05**
+- absolute log2 fold change > **1**
+
+This combined criterion balances statistical confidence and biological magnitude of change.
+
+### 10.7 Why adjusted p-values matter
+
+Thousands of genes are tested simultaneously in RNA-Seq analysis. Adjusted p-values control the false discovery rate and reduce the likelihood of identifying genes as significant purely by chance.
+
+### 10.8 Annotation of DESeq2 results
+
+The DESeq2 output table was annotated using the GTF reference so that gene identifiers could be linked to gene symbols and genomic locations. This made the results easier to interpret, report, and visualize.
+
+The annotated table included fields such as:
+
+- gene identifier;
+- base mean;
+- log2 fold change;
+- standard error;
+- test statistic;
+- p-value;
+- adjusted p-value;
+- chromosome;
+- genomic start and end;
+- strand;
+- gene symbol.
 
 ---
 
-*For questions about this analysis, refer to the 
-[Galaxy Training Network](https://training.galaxyproject.org) 
-tutorial on Reference-based RNA-Seq data analysis.*
+## 11. Identification of Significant Differentially Expressed Genes
+
+The annotated DESeq2 results were filtered in two stages.
+
+### 11.1 Significance filter
+
+The first filter retained genes with adjusted p-value below 0.05.
+
+### 11.2 Effect-size filter
+
+The second filter retained genes with absolute log2 fold change greater than 1.
+
+### 11.3 Final DEG set
+
+After applying both filters, the resulting gene set represented the most robust differential expression signal in the dataset. This set was used for downstream visualization and enrichment analysis.
+
+Using both statistical significance and effect size is important because some genes may be statistically significant but show only small expression differences that are unlikely to be biologically meaningful.
+
+---
+
+## 12. Visualization of Differential Expression
+
+### 12.1 Purpose of visualization
+
+Visualization helps interpret the structure of the DEG set and compare expression patterns across samples. It also provides a useful check for sample grouping, clustering behavior, and consistency of the selected genes.
+
+### 12.2 Extraction of normalized counts
+
+Normalized counts for the significant DEGs were extracted from the DESeq2 output and joined with the filtered DEG list so that only genes meeting the significance criteria were retained for plotting.
+
+### 12.3 Heatmap of log-transformed normalized counts
+
+A heatmap was generated from the normalized count matrix after applying a `log2(value + 1)` transformation.
+
+**Purpose:**  
+To reduce the influence of very large count values and make patterns across genes and samples easier to visualize.
+
+### 12.4 Heatmap with z-score scaling
+
+A second heatmap was generated using row-wise z-score standardization.
+
+**Purpose:**  
+To compare relative expression changes within each gene, independent of the gene’s absolute expression level.
+
+**Interpretation:**
+
+- higher-than-average expression appears as positive z-scores;
+- lower-than-average expression appears as negative z-scores;
+- clustering groups genes and samples with similar expression profiles.
+
+### 12.5 Why use both heatmap types
+
+The log-transformed heatmap preserves approximate magnitude differences, while the z-score heatmap emphasizes relative expression patterns. Together, they provide complementary views of the same DEG set.
+
+---
+
+## 13. Functional Enrichment Analysis
+
+### 13.1 Purpose of enrichment analysis
+
+Once a biologically meaningful DEG set has been identified, enrichment analysis asks what kinds of functions, processes, and pathways are over-represented among those genes. This step moves the analysis from a gene list to a biological interpretation.
+
+### 13.2 Input preparation for goseq
+
+To perform enrichment analysis correctly, two types of inputs were prepared:
+
+1. a list of genes and their differential expression status;
+2. a gene length file.
+
+Gene length correction is important because longer genes are more likely to accumulate reads and can therefore be overrepresented among DEGs for technical reasons if not accounted for.
+
+### 13.3 GO enrichment
+
+**Tool:** goseq
+
+**Purpose:**  
+To identify over-represented Gene Ontology categories among the DEGs.
+
+The following GO domains were analyzed:
+
+- **Biological Process (BP)**  
+  Processes and pathways the gene contributes to.
+- **Molecular Function (MF)**  
+  Molecular activity performed by the gene product.
+- **Cellular Component (CC)**  
+  The cellular location where the gene product acts.
+
+The output included ranked enriched categories and a plot of the most over-represented terms.
+
+### 13.4 KEGG pathway enrichment
+
+**Tool:** goseq
+
+**Purpose:**  
+To identify KEGG pathways that are over-represented among the DEGs.
+
+This analysis helps place the results into broader cellular and metabolic context by showing whether the significant genes cluster in known biological pathways.
+
+### 13.5 Interpretation of enrichment results
+
+Enrichment results should be interpreted as hypotheses about biological themes associated with the experiment. A significant term does not prove causality, but it does highlight processes that are disproportionately represented in the DEG list and therefore worthy of further investigation.
+
+---
+
+## 14. Parameter Justification Summary
+
+| Tool | Parameter | Value | Justification |
+|---|---:|---|---|
+| Cutadapt | Quality cutoff | 20 | Removes low-confidence bases |
+| Cutadapt | Minimum length | 20 | Discards fragments too short for reliable mapping |
+| RNA STAR | Junction overhang | 36 | Matches read length minus one |
+| featureCounts | Feature type | exon | Appropriate for gene-level RNA-Seq quantification |
+| featureCounts | Minimum MAPQ | 10 | Excludes weak alignments |
+| featureCounts | Strand specificity | Unstranded | Matches the library design |
+| DESeq2 | Adjusted p-value cutoff | 0.05 | Controls false discovery rate |
+| DESeq2 | log2FC cutoff | 1 | Requires biologically meaningful change |
+
+---
+
+## 15. Quality Control and Interpretation Standards
+
+To support a strong final report, the following standards were used throughout the analysis:
+
+- input files were verified before analysis;
+- quality reports were reviewed before trimming;
+- trimming reports were checked to confirm preprocessing behaved as expected;
+- alignment logs were summarized to assess mapping performance;
+- count summaries were checked to confirm gene-level assignment;
+- DESeq2 results were filtered using both significance and effect-size criteria;
+- visualizations and enrichment analyses were based only on the final DEG set.
+
+This layered validation reduces the risk of drawing conclusions from poor-quality input or weak statistical signal.
+
+---
+
+## 16. Reproducibility Notes
+
+This workflow was designed for reproducibility and clarity. A reader should be able to reproduce the analysis by following the same steps in Galaxy using the same reference genome, annotation file, and parameter choices.
+
+To ensure reproducibility, the following practices were followed:
+
+- organized histories were used for different analysis stages;
+- input files were clearly named;
+- paired-end reads were handled as pairs throughout preprocessing and alignment;
+- parameter choices were explicitly recorded;
+- reference genome and annotation were kept consistent across steps;
+- statistical thresholds were stated in advance and applied consistently.
+
+---
+
+## 17. Limitations
+
+Although the workflow is robust and standard for reference-based RNA-Seq analysis, several limitations should be acknowledged:
+
+- subsampled reads were used for the mapping demonstration, which may not reflect the full depth of the original experiment;
+- count files used for DESeq2 were pre-computed, so the statistical analysis does not re-establish the alignment stage from the full raw FASTQ files;
+- enrichment results depend on the completeness and correctness of the annotation database;
+- biological interpretation is strongest when paired with experimental metadata and validation data.
+
+These limitations do not undermine the workflow, but they should be acknowledged in a polished report.
+
+---
+
+## 18. Troubleshooting Guide
+
+| Issue | Likely cause | Recommended action |
+|---|---|---|
+| File does not upload correctly | Browser or activation issue | Recheck account setup and upload status |
+| Datatype appears wrong | Galaxy auto-detected incorrectly | Manually set datatype to `fastqsanger` |
+| Paired files do not match | Collection built incorrectly | Rebuild the paired collection carefully |
+| STAR alignment appears poor | Poor read quality or incorrect reference | Review QC and confirm genome/annotation |
+| featureCounts assigns few reads | Annotation mismatch or wrong strand option | Check GTF and library orientation |
+| DESeq2 output is confusing | Input factors not defined correctly | Verify the design matrix and sample groups |
+| Enrichment output is sparse | DEG list too small or too strict | Review filtering thresholds carefully |
+
+---
+
+## 19. Concluding Statement
+
+This RNA-Seq methodology provides a complete, transparent, and reproducible framework for transcriptomic analysis in Galaxy. By combining robust quality control, splice-aware alignment, gene-level quantification, statistically sound differential expression testing, and biologically informative enrichment analysis, the workflow produces results that are both technically defensible and scientifically meaningful.
+
+---
+
+## 20. Core Workflow Tools Used
+
+- **Falco** — read quality assessment  
+- **MultiQC** — report aggregation  
+- **Cutadapt** — trimming and filtering  
+- **RNA STAR** — spliced alignment  
+- **featureCounts** — gene-level read counting  
+- **DESeq2** — differential expression analysis  
+- **Annotate DESeq2/DEXSeq output tables** — result annotation  
+- **heatmap2** — visualization  
+- **goseq** — GO and KEGG enrichment
+
+---
+
+*Prepared for Galaxy-based reference RNA-Seq analysis on Drosophila melanogaster (dm6).*
