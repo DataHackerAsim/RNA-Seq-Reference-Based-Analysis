@@ -137,7 +137,7 @@ RNA-Seq-Reference-Based-Analysis/
 │       ├── heatmap_zscore.pdf
 │       └── go_terms_enrichment.pdf
 │
-└── scripts/                           # (placeholder for custom scripts)
+                       
 ```
 
 ---
