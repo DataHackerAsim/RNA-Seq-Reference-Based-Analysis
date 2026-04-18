@@ -98,8 +98,7 @@ FASTQ reads
 RNA-Seq-Reference-Based-Analysis/
 │
 ├── README.md                          # This file
-├── LICENSE                            # MIT License
-├── .gitignore                         # Git ignore rules
+├── LICENSE                            # MIT License                       
 ├── environment.yml                    # Tool versions (Galaxy platform)
 │
 ├── data/
