@@ -1,0 +1,44 @@
+# ================================================
+# RNA-Seq Analysis — Tool Requirements
+# Platform: Galaxy (https://usegalaxy.eu)
+# ================================================
+# No local installation required.
+# All tools run on Galaxy web platform.
+# ================================================
+
+# QUALITY CONTROL
+Falco==1.2.4+galaxy0
+MultiQC==1.27+galaxy4
+Cutadapt==5.2+galaxy0
+
+# MAPPING
+RNA_STAR==2.7.11b+galaxy0
+
+# COUNTING
+featureCounts==2.1.1+galaxy0
+
+# DIFFERENTIAL EXPRESSION
+DESeq2==2.11.40.8+galaxy0
+
+# ANNOTATION & FILTERING
+Annotate_DESeq2==1.1.0+galaxy1
+Filter==1.1.0
+Compute==2.1
+Cut==1.0
+Change_Case==1.0
+Concatenate_datasets==1.0
+Join_two_Datasets==2.1.3
+Flatten_collection==1.0
+
+# VISUALIZATION
+heatmap2==3.2.0+galaxy1
+
+# ENRICHMENT ANALYSIS
+goseq==1.50.0+galaxy0
+
+# ================================================
+# To reproduce this analysis:
+# 1. Create account on usegalaxy.eu
+# 2. Import data from data/data_links.txt
+# 3. Follow steps in METHODOLOGY.md
+# ================================================
